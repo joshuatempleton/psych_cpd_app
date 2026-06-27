@@ -26,7 +26,7 @@ def main() -> None:
     st.title(APP_TITLE)
     st.caption("Local/session-only CPD tracker. No automatic storage outside the JSON file you choose to save.")
     st.info("This tool supports CPD, peer consultation, learning goals, registrar supervision, endorsement competencies, deadlines, Word export and CSV export. Keep your JSON portfolio file safe.")
-    render_sidebar(portfolio["profile"])
+    render_sidebar(portfolio)
     tabs = st.tabs(["Dashboard", "Learning plan", "CPD log", "Peer consultation", "Endorsement / Registrar", "Export", "Save / load"])
     with tabs[0]: render_dashboard(portfolio)
     with tabs[1]: render_learning_plan(portfolio)
