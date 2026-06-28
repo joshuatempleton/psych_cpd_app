@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 APP_TITLE = "Psychologist CPD Portfolio Tracker"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.6.0"
 
 EVIDENCE_OPTIONS = [
     "Certificate of attendance/completion", "Receipt", "Reading list",

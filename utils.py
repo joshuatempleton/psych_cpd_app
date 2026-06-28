@@ -65,7 +65,7 @@ def available_cpd_cycle_years(portfolio: dict[str, Any]) -> list[int]:
     current_year = date.today().year
     years.add(current_year if date.today() <= date(current_year, 11, 30) else current_year + 1)
 
-    for collection in ("cpd_entries", "peer_entries", "registrar_cpd_entries", "supervision_entries"):
+    for collection in ("cpd_entries", "peer_entries", "registrar_cpd_entries", "supervision_entries", "registrar_practice_entries"):
         for entry in portfolio.get(collection, []):
             year_end = cycle_year_end_for_date(entry.get("date"))
             if year_end:

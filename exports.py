@@ -9,7 +9,7 @@ from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.shared import Inches, Pt
 
-from calculations import build_insights, compute_all_cycle_summaries, compute_metrics, compute_registrar_metrics, compute_targets
+from calculations import build_insights, compute_all_cycle_summaries, compute_direct_client_contact_by_cycle, compute_metrics, compute_registrar_metrics, compute_targets
 from utils import cycle_year_end_for_date, cpd_cycle_label, format_goal_links, goal_title_map
 
 
@@ -71,6 +71,8 @@ def export_csv_zip(portfolio: dict[str, Any]) -> bytes:
         "annual_cpd_combined_documentation.csv": _annual_combined_cpd_rows(portfolio),
         "peer_consultation_entries_all_years.csv": _rows_with_cycle(portfolio.get("peer_entries", [])),
         "registrar_supervision_entries_program_total.csv": _rows_with_cycle(portfolio.get("supervision_entries", [])),
+        "registrar_practice_log_entries_program_total.csv": _rows_with_cycle(portfolio.get("registrar_practice_entries", [])),
+        "registrar_direct_client_contact_by_cycle.csv": compute_direct_client_contact_by_cycle(portfolio),
         "annual_peer_consultation_combined_documentation.csv": _annual_combined_peer_rows(portfolio),
         "annual_cpd_cycle_summaries.csv": compute_all_cycle_summaries(portfolio),
         "registrar_competencies.csv": portfolio.get("competency_assessments", []),
@@ -95,7 +97,10 @@ def export_csv_zip(portfolio: dict[str, Any]) -> bytes:
                     {"Metric": "Selected cycle peer consultation hours - total", "Value": metrics["peer_hours"]},
                     {"Metric": "Selected cycle peer hours from peer log", "Value": metrics["standalone_peer_hours"]},
                     {"Metric": "Selected cycle peer hours from registrar supervision", "Value": metrics["registrar_supervision_peer_hours_in_cycle"]},
-                    {"Metric": "Registrar practice hours - program total", "Value": reg["practice_hours"]},
+                    {"Metric": "Registrar practice hours from practice log - program total", "Value": reg["practice_hours"]},
+                    {"Metric": "Registrar practice log entries", "Value": reg["practice_log_entry_count"]},
+                    {"Metric": "Direct client contact hours - selected cycle", "Value": reg["direct_client_contact_hours_selected_cycle"]},
+                    {"Metric": "Direct client contact minimum - selected cycle", "Value": 176.0},
                     {"Metric": "Registrar supervision hours - program total", "Value": reg["supervision_hours"]},
                     {"Metric": "Registrar active CPD hours - program total", "Value": reg["active_cpd_hours"]},
                 ]
@@ -264,6 +269,44 @@ def export_docx(portfolio: dict[str, Any]) -> bytes:
                 e.get("reflection"),
             ]
             for e in portfolio.get("peer_entries", [])
+        ],
+    )
+
+    doc.add_heading("Registrar practice log", level=1)
+    _add_table(
+        doc,
+        ["Date", "Endorsement area", "Practice hours", "Direct client contact hours", "Description", "Role context", "Competency domains", "Direct contact tasks", "Supervisor reviewed", "Evidence", "Reflection"],
+        [
+            [
+                e.get("date"),
+                e.get("endorsement_area"),
+                e.get("practice_hours"),
+                e.get("direct_client_contact_hours"),
+                e.get("practice_description"),
+                e.get("role_context"),
+                "; ".join(e.get("competency_domains", [])),
+                "; ".join(e.get("direct_client_contact_tasks", [])),
+                "Yes" if e.get("supervisor_reviewed", False) else "No",
+                e.get("evidence"),
+                e.get("reflection"),
+            ]
+            for e in portfolio.get("registrar_practice_entries", [])
+        ],
+    )
+
+    doc.add_heading("Registrar direct client contact by CPD cycle", level=1)
+    _add_table(
+        doc,
+        ["CPD cycle", "Direct client contact hours", "Minimum required", "Remaining", "Requirement met"],
+        [
+            [
+                e.get("cycle_label"),
+                e.get("direct_client_contact_hours"),
+                e.get("minimum_required_hours"),
+                e.get("remaining_hours"),
+                "Yes" if e.get("requirement_met") else "No",
+            ]
+            for e in compute_direct_client_contact_by_cycle(portfolio)
         ],
     )
 

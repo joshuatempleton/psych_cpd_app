@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any
 
 from constants import REGISTRAR_REQUIREMENTS
-from utils import available_cpd_cycle_years, cpd_cycle_label, in_cpd_cycle, safe_float
+from utils import available_cpd_cycle_years, cpd_cycle_label, cycle_year_end_for_date, in_cpd_cycle, safe_float
 
 
 def selected_cpd_cycle_year_end(portfolio: dict[str, Any]) -> int:
@@ -144,6 +144,33 @@ def compute_all_cycle_summaries(portfolio: dict[str, Any]) -> list[dict[str, Any
     return rows
 
 
+def compute_direct_client_contact_by_cycle(portfolio: dict[str, Any]) -> list[dict[str, Any]]:
+    """Summarise registrar direct client contact hours by annual CPD cycle.
+
+    The endorsement guidelines require registrar practice to include at least
+    176 hours per year of direct client contact. This is reported by CPD cycle
+    because the app already uses the Board's 1 December to 30 November cycle.
+    """
+    summaries: dict[int, float] = {}
+    for entry in portfolio.get("registrar_practice_entries", []):
+        year_end = cycle_year_end_for_date(entry.get("date"))
+        if year_end is None:
+            continue
+        summaries[year_end] = summaries.get(year_end, 0.0) + safe_float(entry.get("direct_client_contact_hours"))
+
+    return [
+        {
+            "cycle_year_end": year_end,
+            "cycle_label": cpd_cycle_label(year_end),
+            "direct_client_contact_hours": round(hours, 2),
+            "minimum_required_hours": 176.0,
+            "remaining_hours": round(max(0.0, 176.0 - hours), 2),
+            "requirement_met": hours >= 176.0,
+        }
+        for year_end, hours in sorted(summaries.items(), reverse=True)
+    ]
+
+
 def compute_registrar_metrics(portfolio: dict[str, Any]) -> dict[str, Any]:
     """Compute registrar metrics across the whole registrar program."""
     registrar = portfolio.get("registrar", {})
@@ -155,21 +182,39 @@ def compute_registrar_metrics(portfolio: dict[str, Any]) -> dict[str, Any]:
 
     supervision_entries = portfolio.get("supervision_entries", [])
     registrar_cpd_entries = portfolio.get("registrar_cpd_entries", [])
+    practice_entries = portfolio.get("registrar_practice_entries", [])
 
     supervision_hours = round(sum(safe_float(x.get("hours")) for x in supervision_entries), 2)
     active_cpd_hours = round(sum(safe_float(x.get("hours")) for x in registrar_cpd_entries), 2)
-    practice_hours = round(sum(safe_float(x.get("practice_hours")) for x in supervision_entries), 2)
+    practice_hours = round(sum(safe_float(x.get("practice_hours")) for x in practice_entries), 2)
+    direct_client_contact_hours = round(sum(safe_float(x.get("direct_client_contact_hours")) for x in practice_entries), 2)
+    practice_log_entry_count = len(practice_entries)
 
     half_practice_due_at = requirements["practice_hours"] / 2
+    selected_cycle = selected_cpd_cycle_year_end(portfolio)
+    direct_client_contact_hours_selected_cycle = round(
+        sum(
+            safe_float(x.get("direct_client_contact_hours"))
+            for x in practice_entries
+            if in_cpd_cycle(x.get("date"), selected_cycle)
+        ),
+        2,
+    )
 
     return {
         "requirements": requirements,
         "practice_hours": practice_hours,
+        "practice_log_entry_count": practice_log_entry_count,
         "practice_remaining": round(max(0, requirements["practice_hours"] - practice_hours), 2),
         "supervision_hours": supervision_hours,
         "supervision_remaining": round(max(0, requirements["supervision_hours"] - supervision_hours), 2),
         "active_cpd_hours": active_cpd_hours,
         "active_cpd_remaining": round(max(0, requirements["active_cpd_hours"] - active_cpd_hours), 2),
+        "direct_client_contact_hours": direct_client_contact_hours,
+        "direct_client_contact_hours_selected_cycle": direct_client_contact_hours_selected_cycle,
+        "direct_client_contact_remaining_selected_cycle": round(max(0.0, 176.0 - direct_client_contact_hours_selected_cycle), 2),
+        "direct_client_contact_requirement_met_selected_cycle": direct_client_contact_hours_selected_cycle >= 176.0,
+        "direct_client_contact_by_cycle": compute_direct_client_contact_by_cycle(portfolio),
         "half_practice_due_at": half_practice_due_at,
         "half_practice_report_due": practice_hours >= half_practice_due_at,
         "program_start_date": registrar.get("program_start_date", ""),
@@ -208,7 +253,9 @@ def build_insights(portfolio: dict[str, Any], metrics: dict[str, Any]) -> str:
             "Registrar program view:",
             "- Registrar totals are cumulative across the whole program and do not reset each CPD year.",
             "- Registrar active CPD and supervision are also counted in annual CPD where marked eligible.",
-            f"- Practice hours: {reg['practice_hours']} / {reg['requirements']['practice_hours']}",
+            f"- Practice hours from registrar practice log: {reg['practice_hours']} / {reg['requirements']['practice_hours']}",
+            f"  - Practice log entries: {reg['practice_log_entry_count']}",
+            f"- Direct client contact this selected cycle: {reg['direct_client_contact_hours_selected_cycle']} / 176.0",
             f"- Supervision hours: {reg['supervision_hours']} / {reg['requirements']['supervision_hours']}",
             f"- Active CPD hours: {reg['active_cpd_hours']} / {reg['requirements']['active_cpd_hours']}",
         ]

@@ -66,6 +66,19 @@ def render_registrar_progress_dashboard(portfolio: dict, *, compact: bool = Fals
         f"{metrics['active_cpd_remaining']} remaining",
     )
 
+    p1, p2 = st.columns(2)
+    p1.metric(
+        "Practice log entries",
+        metrics["practice_log_entry_count"],
+        "source of practice hours",
+    )
+    p2.metric(
+        "Direct client contact in selected annual cycle",
+        f"{metrics['direct_client_contact_hours_selected_cycle']} / 176.0",
+        f"{metrics['direct_client_contact_remaining_selected_cycle']} remaining",
+    )
+    st.caption("Registrar practice hours are calculated only from the Registrar Practice Log to avoid duplicate counting.")
+
     if metrics["half_practice_report_due"]:
         st.warning("Half-way supervised practice threshold reached. Progress report may be due.")
     else:
@@ -210,9 +223,171 @@ def _render_registrar_active_cpd(portfolio: dict, endorsement_area: str) -> None
             st.warning("Select an existing registrar CPD entry first.")
 
 
+
+def _render_practice_diary(portfolio: dict, selected_area: str, competency_map: dict) -> None:
+    st.markdown("### Registrar practice log")
+    st.caption(
+        "Record each work day that contributes to registrar supervised practice. Practice hours for the registrar "
+        "program are calculated from this log only. Supervision is recorded separately and does not add practice hours."
+    )
+
+    entries = portfolio.setdefault("registrar_practice_entries", [])
+    domain_options = list(competency_map.keys())
+    direct_contact_tasks = [
+        "Psychological assessment",
+        "Intervention",
+        "Prevention",
+        "Consultation",
+        "Management planning",
+        "Other direct client contact",
+    ]
+
+    if entries:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Date": e.get("date", ""),
+                        "Endorsement area": e.get("endorsement_area", ""),
+                        "Practice hours": e.get("practice_hours", 0.0),
+                        "Direct client contact hours": e.get("direct_client_contact_hours", 0.0),
+                        "Description": e.get("practice_description", ""),
+                        "Competency domains": "; ".join(e.get("competency_domains", [])),
+                        "Supervisor reviewed": "Yes" if e.get("supervisor_reviewed", False) else "No",
+                        "Evidence": e.get("evidence", ""),
+                    }
+                    for e in entries
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    entry_options = {"New practice log entry": None}
+    for e in entries:
+        label = (
+            f"{e.get('date', '')} | "
+            f"{safe_float(e.get('practice_hours'))}h practice | "
+            f"{e.get('practice_description', '')[:60]}"
+        )
+        entry_options[label] = e.get("id")
+
+    selected_label = st.selectbox(
+        "Choose a practice log entry to edit, or leave on New practice log entry",
+        list(entry_options.keys()),
+        key="registrar_practice_select_entry",
+    )
+    selected_id = entry_options[selected_label]
+    selected_entry = get_entry_by_id(entries, selected_id)
+
+    default_domains = selected_entry.get("competency_domains", []) if selected_entry else []
+    default_tasks = selected_entry.get("direct_client_contact_tasks", []) if selected_entry else []
+
+    with st.form("registrar_practice_form", clear_on_submit=False):
+        d1, d2, d3 = st.columns(3)
+        practice_date = d1.date_input(
+            "Work date",
+            value=parse_iso_date(selected_entry.get("date")) if selected_entry else date.today(),
+        )
+        practice_hours = d2.number_input(
+            "Registrar practice hours for this day",
+            min_value=0.0,
+            step=0.25,
+            format="%.2f",
+            value=safe_float(selected_entry.get("practice_hours")) if selected_entry else 0.0,
+            help="These hours are the single source of truth for registrar practice-hour totals.",
+        )
+        direct_client_contact_hours = d3.number_input(
+            "Direct client contact hours",
+            min_value=0.0,
+            step=0.25,
+            format="%.2f",
+            value=safe_float(selected_entry.get("direct_client_contact_hours")) if selected_entry else 0.0,
+            help="Direct client contact includes psychological assessment, intervention, prevention, consultation and management planning.",
+        )
+
+        practice_description = st.text_area(
+            "Description of psychological practice performed",
+            value=selected_entry.get("practice_description", "") if selected_entry else "",
+            help="Use a de-identified description. Include the work performed and why it is within the approved registrar area.",
+        )
+        role_context = st.text_input(
+            "Practice context / work role",
+            value=selected_entry.get("role_context", "") if selected_entry else "",
+            help="For example: psychosocial risk consulting, organisational assessment, advisory, research, training, policy or client consultation.",
+        )
+        competency_domains = st.multiselect(
+            "Competency domains evidenced",
+            options=domain_options,
+            default=[d for d in default_domains if d in domain_options],
+        )
+        direct_client_contact_tasks_selected = st.multiselect(
+            "Direct client contact task types",
+            options=direct_contact_tasks,
+            default=[t for t in default_tasks if t in direct_contact_tasks],
+        )
+        reflection = st.text_area(
+            "Brief reflection / supervisor discussion points",
+            value=selected_entry.get("reflection", "") if selected_entry else "",
+        )
+        evidence = st.text_input(
+            "Evidence / where stored",
+            value=selected_entry.get("evidence", "") if selected_entry else "",
+            help="For example: de-identified work log, project file, supervision agenda, report reference or timesheet reference.",
+        )
+        supervisor_reviewed = st.checkbox(
+            "Supervisor has reviewed or discussed this practice entry",
+            value=selected_entry.get("supervisor_reviewed", False) if selected_entry else False,
+        )
+
+        col1, col2 = st.columns(2)
+        save_clicked = col1.form_submit_button("Save practice log entry")
+        delete_clicked = col2.form_submit_button("Delete selected practice log entry")
+
+    if save_clicked:
+        if direct_client_contact_hours > practice_hours:
+            st.warning("Direct client contact hours cannot exceed total practice hours for the day.")
+            return
+        if not practice_description.strip():
+            st.warning("Add a de-identified description of the work performed before saving.")
+            return
+
+        upsert_entry(
+            entries,
+            {
+                "id": selected_entry.get("id") if selected_entry else new_id(),
+                "date": practice_date.isoformat(),
+                "endorsement_area": selected_area,
+                "practice_hours": round(float(practice_hours), 2),
+                "direct_client_contact_hours": round(float(direct_client_contact_hours), 2),
+                "practice_description": practice_description,
+                "role_context": role_context,
+                "competency_domains": competency_domains,
+                "direct_client_contact_tasks": direct_client_contact_tasks_selected,
+                "reflection": reflection,
+                "evidence": evidence,
+                "supervisor_reviewed": supervisor_reviewed,
+                "source": "registrar_practice_log",
+            },
+        )
+        st.success("Practice log entry saved.")
+        st.rerun()
+
+    if delete_clicked:
+        if selected_id:
+            delete_entry(entries, selected_id)
+            st.success("Practice log entry deleted.")
+            st.rerun()
+        else:
+            st.warning("Select an existing practice log entry first.")
+
+
 def _render_supervision_log(portfolio: dict, selected_area: str, competency_map: dict) -> None:
     st.markdown("### Supervision log")
-    st.caption("Eligible registrar supervision can also be documented as annual peer consultation.")
+    st.caption(
+        "Eligible registrar supervision can also be documented as annual peer consultation. "
+        "Practice hours are intentionally not entered here; they are calculated from the Registrar Practice Log only."
+    )
 
     entries = portfolio.setdefault("supervision_entries", [])
 
@@ -226,7 +401,6 @@ def _render_supervision_log(portfolio: dict, selected_area: str, competency_map:
                         "Supervisor": e.get("supervisor_name", ""),
                         "Type": e.get("supervision_type", ""),
                         "Supervision hours": e.get("hours", 0.0),
-                        "Practice hours": e.get("practice_hours", 0.0),
                         "Counts to annual peer consultation": "Yes" if e.get("counts_towards_peer_consultation", True) else "No",
                         "Competency domains": "; ".join(e.get("competency_domains", [])),
                         "Evidence": e.get("evidence", ""),
@@ -264,7 +438,7 @@ def _render_supervision_log(portfolio: dict, selected_area: str, competency_map:
     default_domains = selected_entry.get("competency_domains", []) if selected_entry else []
 
     with st.form("registrar_supervision_form", clear_on_submit=False):
-        s1, s2, s3 = st.columns(3)
+        s1, s2 = st.columns(2)
         supervision_date = s1.date_input(
             "Supervision date",
             value=parse_iso_date(selected_entry.get("date")) if selected_entry else date.today(),
@@ -276,14 +450,6 @@ def _render_supervision_log(portfolio: dict, selected_area: str, competency_map:
             format="%.2f",
             value=safe_float(selected_entry.get("hours")) if selected_entry else 0.0,
         )
-        practice_hours = s3.number_input(
-            "Practice hours accrued since last supervision",
-            min_value=0.0,
-            step=0.25,
-            format="%.2f",
-            value=safe_float(selected_entry.get("practice_hours")) if selected_entry else 0.0,
-        )
-
         supervisor_name = st.text_input(
             "Supervisor name",
             value=selected_entry.get("supervisor_name", "") if selected_entry else "",
@@ -323,7 +489,7 @@ def _render_supervision_log(portfolio: dict, selected_area: str, competency_map:
                 "id": selected_entry.get("id") if selected_entry else new_id(),
                 "date": supervision_date.isoformat(),
                 "hours": round(float(supervision_hours), 2),
-                "practice_hours": round(float(practice_hours), 2),
+                "practice_hours": 0.0,
                 "supervisor_name": supervisor_name,
                 "supervision_type": supervision_type,
                 "competency_domains": competency_domains,
@@ -352,6 +518,7 @@ def render_endorsement_registrar(portfolio: dict) -> None:
     registrar = portfolio.setdefault("registrar", {})
     portfolio.setdefault("supervision_entries", [])
     portfolio.setdefault("registrar_cpd_entries", [])
+    portfolio.setdefault("registrar_practice_entries", [])
     portfolio.setdefault("competency_assessments", [])
     portfolio.setdefault("registrar_deadlines", [])
 
@@ -406,6 +573,8 @@ def render_endorsement_registrar(portfolio: dict) -> None:
 
     selected_area = registrar["area"]
     competency_map = get_competency_map(selected_area)
+
+    _render_practice_diary(portfolio, selected_area, competency_map)
 
     _render_supervision_log(portfolio, selected_area, competency_map)
 

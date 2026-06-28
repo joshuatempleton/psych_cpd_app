@@ -73,6 +73,7 @@ def default_portfolio() -> dict[str, Any]:
         # Registrar CPD entries are logged in the registrar module first.
         # Eligible hours are also counted in the annual CPD dashboard/export.
         "registrar_cpd_entries": [],
+        "registrar_practice_entries": [],
         "summary_insights": "",
         "registrar": {
             "enabled": False,
@@ -91,6 +92,71 @@ def default_portfolio() -> dict[str, Any]:
         "competency_assessments": [],
         "registrar_deadlines": [],
     }
+
+
+def _migrate_legacy_supervision_practice_hours(data: dict[str, Any]) -> None:
+    """Move older supervision-accrued practice hours into the practice log.
+
+    Version 2.6 makes registrar practice log entries the single source of
+    truth for registrar practice hours. Earlier portfolios could store
+    practice hours against supervision entries. This migration preserves those
+    hours as auditable legacy practice log entries and clears the old
+    supervision practice-hours field to avoid double counting.
+    """
+    practice_entries = data.setdefault("registrar_practice_entries", [])
+    supervision_entries = data.setdefault("supervision_entries", [])
+
+    migrated_supervision_ids = {
+        entry.get("original_supervision_entry_id")
+        for entry in practice_entries
+        if entry.get("source") == "legacy_supervision_practice_migration"
+    }
+
+    migrated_any = False
+    for supervision in supervision_entries:
+        supervision_id = supervision.get("id") or new_id()
+        supervision["id"] = supervision_id
+        legacy_hours = safe_float_local(supervision.get("practice_hours"))
+        already_migrated = supervision.get("practice_hours_migrated_to_practice_log", False)
+
+        if legacy_hours > 0 and supervision_id not in migrated_supervision_ids and not already_migrated:
+            practice_entries.append(
+                {
+                    "id": new_id(),
+                    "date": supervision.get("date", ""),
+                    "endorsement_area": supervision.get("endorsement_area", data.get("registrar", {}).get("area", "")),
+                    "practice_hours": round(legacy_hours, 2),
+                    "direct_client_contact_hours": 0.0,
+                    "practice_description": (
+                        "Legacy registrar practice hours migrated from a supervision entry. "
+                        "Replace this with day-level practice log entries where possible."
+                    ),
+                    "organisation_or_client_context": "Legacy supervision entry",
+                    "competency_domains": supervision.get("competency_domains", []),
+                    "evidence": supervision.get("evidence", ""),
+                    "supervisor_reviewed": True,
+                    "source": "legacy_supervision_practice_migration",
+                    "original_supervision_entry_id": supervision_id,
+                }
+            )
+            migrated_any = True
+
+        if legacy_hours > 0 or already_migrated:
+            supervision["legacy_practice_hours_migrated"] = round(legacy_hours, 2)
+            supervision["practice_hours"] = 0.0
+            supervision["practice_hours_migrated_to_practice_log"] = True
+
+    if migrated_any:
+        data.setdefault("meta", {})["v2_6_practice_hour_migration"] = datetime.now().isoformat()
+
+
+def safe_float_local(value: Any) -> float:
+    try:
+        if value in (None, ""):
+            return 0.0
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def normalise_portfolio(data: dict[str, Any]) -> dict[str, Any]:
@@ -120,11 +186,14 @@ def normalise_portfolio(data: dict[str, Any]) -> dict[str, Any]:
         data["registrar"].setdefault(key, value)
 
     data.setdefault("registrar_cpd_entries", [])
+    data.setdefault("registrar_practice_entries", [])
     data.setdefault("supervision_entries", [])
     data.setdefault("competency_assessments", [])
     data.setdefault("registrar_deadlines", [])
 
     while len(data.get("learning_goals", [])) < 3:
         data.setdefault("learning_goals", []).append(default_goal(len(data["learning_goals"]) + 1))
+
+    _migrate_legacy_supervision_practice_hours(data)
 
     return data
