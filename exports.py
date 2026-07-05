@@ -275,20 +275,12 @@ def export_docx(portfolio: dict[str, Any]) -> bytes:
     doc.add_heading("Registrar practice log", level=1)
     _add_table(
         doc,
-        ["Date", "Endorsement area", "Practice hours", "Direct client contact hours", "Description", "Role context", "Competency domains", "Direct contact tasks", "Supervisor reviewed", "Evidence", "Reflection"],
+        ["Date", "Practice hours", "Direct client contact hours"],
         [
             [
                 e.get("date"),
-                e.get("endorsement_area"),
                 e.get("practice_hours"),
                 e.get("direct_client_contact_hours"),
-                e.get("practice_description"),
-                e.get("role_context"),
-                "; ".join(e.get("competency_domains", [])),
-                "; ".join(e.get("direct_client_contact_tasks", [])),
-                "Yes" if e.get("supervisor_reviewed", False) else "No",
-                e.get("evidence"),
-                e.get("reflection"),
             ]
             for e in portfolio.get("registrar_practice_entries", [])
         ],

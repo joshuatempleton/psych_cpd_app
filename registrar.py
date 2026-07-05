@@ -232,15 +232,6 @@ def _render_practice_diary(portfolio: dict, selected_area: str, competency_map: 
     )
 
     entries = portfolio.setdefault("registrar_practice_entries", [])
-    domain_options = list(competency_map.keys())
-    direct_contact_tasks = [
-        "Psychological assessment",
-        "Intervention",
-        "Prevention",
-        "Consultation",
-        "Management planning",
-        "Other direct client contact",
-    ]
 
     if entries:
         st.dataframe(
@@ -248,13 +239,8 @@ def _render_practice_diary(portfolio: dict, selected_area: str, competency_map: 
                 [
                     {
                         "Date": e.get("date", ""),
-                        "Endorsement area": e.get("endorsement_area", ""),
                         "Practice hours": e.get("practice_hours", 0.0),
                         "Direct client contact hours": e.get("direct_client_contact_hours", 0.0),
-                        "Description": e.get("practice_description", ""),
-                        "Competency domains": "; ".join(e.get("competency_domains", [])),
-                        "Supervisor reviewed": "Yes" if e.get("supervisor_reviewed", False) else "No",
-                        "Evidence": e.get("evidence", ""),
                     }
                     for e in entries
                 ]
@@ -268,7 +254,7 @@ def _render_practice_diary(portfolio: dict, selected_area: str, competency_map: 
         label = (
             f"{e.get('date', '')} | "
             f"{safe_float(e.get('practice_hours'))}h practice | "
-            f"{e.get('practice_description', '')[:60]}"
+            f"{safe_float(e.get('direct_client_contact_hours'))}h client contact"
         )
         entry_options[label] = e.get("id")
 
@@ -280,9 +266,6 @@ def _render_practice_diary(portfolio: dict, selected_area: str, competency_map: 
     selected_id = entry_options[selected_label]
     selected_entry = get_entry_by_id(entries, selected_id)
 
-    default_domains = selected_entry.get("competency_domains", []) if selected_entry else []
-    default_tasks = selected_entry.get("direct_client_contact_tasks", []) if selected_entry else []
-
     with st.form("registrar_practice_form", clear_on_submit=False):
         d1, d2, d3 = st.columns(3)
         practice_date = d1.date_input(
@@ -290,54 +273,20 @@ def _render_practice_diary(portfolio: dict, selected_area: str, competency_map: 
             value=parse_iso_date(selected_entry.get("date")) if selected_entry else date.today(),
         )
         practice_hours = d2.number_input(
-            "Registrar practice hours for this day",
+            "Practice duration",
             min_value=0.0,
             step=0.25,
             format="%.2f",
             value=safe_float(selected_entry.get("practice_hours")) if selected_entry else 0.0,
-            help="These hours are the single source of truth for registrar practice-hour totals.",
+            help="Total registrar practice hours completed on this date.",
         )
         direct_client_contact_hours = d3.number_input(
-            "Direct client contact hours",
+            "Client contact",
             min_value=0.0,
             step=0.25,
             format="%.2f",
             value=safe_float(selected_entry.get("direct_client_contact_hours")) if selected_entry else 0.0,
-            help="Direct client contact includes psychological assessment, intervention, prevention, consultation and management planning.",
-        )
-
-        practice_description = st.text_area(
-            "Description of psychological practice performed",
-            value=selected_entry.get("practice_description", "") if selected_entry else "",
-            help="Use a de-identified description. Include the work performed and why it is within the approved registrar area.",
-        )
-        role_context = st.text_input(
-            "Practice context / work role",
-            value=selected_entry.get("role_context", "") if selected_entry else "",
-            help="For example: psychosocial risk consulting, organisational assessment, advisory, research, training, policy or client consultation.",
-        )
-        competency_domains = st.multiselect(
-            "Competency domains evidenced",
-            options=domain_options,
-            default=[d for d in default_domains if d in domain_options],
-        )
-        direct_client_contact_tasks_selected = st.multiselect(
-            "Direct client contact task types",
-            options=direct_contact_tasks,
-            default=[t for t in default_tasks if t in direct_contact_tasks],
-        )
-        reflection = st.text_area(
-            "Brief reflection / supervisor discussion points",
-            value=selected_entry.get("reflection", "") if selected_entry else "",
-        )
-        evidence = st.text_input(
-            "Evidence / where stored",
-            value=selected_entry.get("evidence", "") if selected_entry else "",
-            help="For example: de-identified work log, project file, supervision agenda, report reference or timesheet reference.",
-        )
-        supervisor_reviewed = st.checkbox(
-            "Supervisor has reviewed or discussed this practice entry",
-            value=selected_entry.get("supervisor_reviewed", False) if selected_entry else False,
+            help="Direct client contact hours completed on this date.",
         )
 
         col1, col2 = st.columns(2)
@@ -346,10 +295,7 @@ def _render_practice_diary(portfolio: dict, selected_area: str, competency_map: 
 
     if save_clicked:
         if direct_client_contact_hours > practice_hours:
-            st.warning("Direct client contact hours cannot exceed total practice hours for the day.")
-            return
-        if not practice_description.strip():
-            st.warning("Add a de-identified description of the work performed before saving.")
+            st.warning("Client contact hours cannot exceed total practice duration for the day.")
             return
 
         upsert_entry(
@@ -360,13 +306,6 @@ def _render_practice_diary(portfolio: dict, selected_area: str, competency_map: 
                 "endorsement_area": selected_area,
                 "practice_hours": round(float(practice_hours), 2),
                 "direct_client_contact_hours": round(float(direct_client_contact_hours), 2),
-                "practice_description": practice_description,
-                "role_context": role_context,
-                "competency_domains": competency_domains,
-                "direct_client_contact_tasks": direct_client_contact_tasks_selected,
-                "reflection": reflection,
-                "evidence": evidence,
-                "supervisor_reviewed": supervisor_reviewed,
                 "source": "registrar_practice_log",
             },
         )
