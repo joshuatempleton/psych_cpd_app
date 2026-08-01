@@ -171,8 +171,32 @@ def compute_direct_client_contact_by_cycle(portfolio: dict[str, Any]) -> list[di
     ]
 
 
+def _normalise_supervisor_category(entry: dict[str, Any]) -> str:
+    """Return a stable supervisor category while retaining legacy entries."""
+    category = str(entry.get("supervisor_category", "")).strip()
+    if category:
+        return category
+
+    legacy_type = str(entry.get("supervision_type", "")).strip().lower()
+    if legacy_type == "principal":
+        return "Principal supervisor"
+    if legacy_type == "secondary":
+        return "Legacy secondary supervisor - classification required"
+    return "Unclassified"
+
+
+def _normalise_supervision_format(entry: dict[str, Any]) -> str:
+    """Return Individual or Group while retaining legacy supervision records."""
+    value = str(entry.get("supervision_format", "")).strip()
+    if value in {"Individual", "Group"}:
+        return value
+
+    legacy_type = str(entry.get("supervision_type", "")).strip().lower()
+    return "Group" if legacy_type == "group" else "Individual"
+
+
 def compute_registrar_metrics(portfolio: dict[str, Any]) -> dict[str, Any]:
-    """Compute registrar metrics across the whole registrar program."""
+    """Compute cumulative registrar requirements and supervision composition."""
     registrar = portfolio.get("registrar", {})
     pathway = registrar.get("qualification_pathway", "Approved sixth-year Masters pathway")
     requirements = REGISTRAR_REQUIREMENTS.get(
@@ -190,16 +214,43 @@ def compute_registrar_metrics(portfolio: dict[str, Any]) -> dict[str, Any]:
     direct_client_contact_hours = round(sum(safe_float(x.get("direct_client_contact_hours")) for x in practice_entries), 2)
     practice_log_entry_count = len(practice_entries)
 
+    supervision_requirement = float(requirements["supervision_hours"])
+    principal_minimum = round(supervision_requirement * 0.50, 2)
+    secondary_same_area_maximum = round(supervision_requirement * 0.50, 2)
+    secondary_other_area_maximum = round(supervision_requirement * 0.33, 2)
+    group_maximum = round(supervision_requirement * 0.33, 2)
+
+    principal_hours = 0.0
+    secondary_same_area_hours = 0.0
+    secondary_other_area_hours = 0.0
+    group_hours = 0.0
+    unclassified_hours = 0.0
+
+    for entry in supervision_entries:
+        hours = safe_float(entry.get("hours"))
+        category = _normalise_supervisor_category(entry)
+        supervision_format = _normalise_supervision_format(entry)
+
+        if category == "Principal supervisor":
+            principal_hours += hours
+        elif category == "Secondary supervisor - same area of practice endorsement":
+            secondary_same_area_hours += hours
+        elif category == "Secondary supervisor - different or no area of practice endorsement":
+            secondary_other_area_hours += hours
+        else:
+            unclassified_hours += hours
+
+        if supervision_format == "Group":
+            group_hours += hours
+
+    principal_hours = round(principal_hours, 2)
+    secondary_same_area_hours = round(secondary_same_area_hours, 2)
+    secondary_other_area_hours = round(secondary_other_area_hours, 2)
+    group_hours = round(group_hours, 2)
+    unclassified_hours = round(unclassified_hours, 2)
+
+    client_contact_requirement = float(requirements.get("direct_client_contact_hours", 176.0))
     half_practice_due_at = requirements["practice_hours"] / 2
-    selected_cycle = selected_cpd_cycle_year_end(portfolio)
-    direct_client_contact_hours_selected_cycle = round(
-        sum(
-            safe_float(x.get("direct_client_contact_hours"))
-            for x in practice_entries
-            if in_cpd_cycle(x.get("date"), selected_cycle)
-        ),
-        2,
-    )
 
     return {
         "requirements": requirements,
@@ -207,14 +258,35 @@ def compute_registrar_metrics(portfolio: dict[str, Any]) -> dict[str, Any]:
         "practice_log_entry_count": practice_log_entry_count,
         "practice_remaining": round(max(0, requirements["practice_hours"] - practice_hours), 2),
         "supervision_hours": supervision_hours,
-        "supervision_remaining": round(max(0, requirements["supervision_hours"] - supervision_hours), 2),
+        "supervision_remaining": round(max(0, supervision_requirement - supervision_hours), 2),
         "active_cpd_hours": active_cpd_hours,
         "active_cpd_remaining": round(max(0, requirements["active_cpd_hours"] - active_cpd_hours), 2),
         "direct_client_contact_hours": direct_client_contact_hours,
-        "direct_client_contact_hours_selected_cycle": direct_client_contact_hours_selected_cycle,
-        "direct_client_contact_remaining_selected_cycle": round(max(0.0, 176.0 - direct_client_contact_hours_selected_cycle), 2),
-        "direct_client_contact_requirement_met_selected_cycle": direct_client_contact_hours_selected_cycle >= 176.0,
+        "direct_client_contact_requirement": client_contact_requirement,
+        "direct_client_contact_remaining": round(max(0.0, client_contact_requirement - direct_client_contact_hours), 2),
+        "direct_client_contact_requirement_met": direct_client_contact_hours >= client_contact_requirement,
         "direct_client_contact_by_cycle": compute_direct_client_contact_by_cycle(portfolio),
+        "principal_supervision_hours": principal_hours,
+        "principal_supervision_minimum": principal_minimum,
+        "principal_supervision_remaining": round(max(0.0, principal_minimum - principal_hours), 2),
+        "principal_supervision_requirement_met": principal_hours >= principal_minimum,
+        "secondary_same_area_hours": secondary_same_area_hours,
+        "secondary_same_area_maximum": secondary_same_area_maximum,
+        "secondary_same_area_within_limit": secondary_same_area_hours <= secondary_same_area_maximum,
+        "secondary_other_area_hours": secondary_other_area_hours,
+        "secondary_other_area_maximum": secondary_other_area_maximum,
+        "secondary_other_area_within_limit": secondary_other_area_hours <= secondary_other_area_maximum,
+        "group_supervision_hours": group_hours,
+        "group_supervision_maximum": group_maximum,
+        "group_supervision_within_limit": group_hours <= group_maximum,
+        "unclassified_supervision_hours": unclassified_hours,
+        "supervision_composition_compliant": (
+            principal_hours >= principal_minimum
+            and secondary_same_area_hours <= secondary_same_area_maximum
+            and secondary_other_area_hours <= secondary_other_area_maximum
+            and group_hours <= group_maximum
+            and unclassified_hours == 0
+        ),
         "half_practice_due_at": half_practice_due_at,
         "half_practice_report_due": practice_hours >= half_practice_due_at,
         "program_start_date": registrar.get("program_start_date", ""),
@@ -255,7 +327,7 @@ def build_insights(portfolio: dict[str, Any], metrics: dict[str, Any]) -> str:
             "- Registrar active CPD and supervision are also counted in annual CPD where marked eligible.",
             f"- Practice hours from registrar practice log: {reg['practice_hours']} / {reg['requirements']['practice_hours']}",
             f"  - Practice log entries: {reg['practice_log_entry_count']}",
-            f"- Direct client contact this selected cycle: {reg['direct_client_contact_hours_selected_cycle']} / 176.0",
+            f"- Direct client contact: {reg['direct_client_contact_hours']} / {reg['direct_client_contact_requirement']}",
             f"- Supervision hours: {reg['supervision_hours']} / {reg['requirements']['supervision_hours']}",
             f"- Active CPD hours: {reg['active_cpd_hours']} / {reg['requirements']['active_cpd_hours']}",
         ]

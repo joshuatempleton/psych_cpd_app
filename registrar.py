@@ -5,10 +5,17 @@ import pandas as pd
 import streamlit as st
 
 from calculations import compute_registrar_metrics
-from constants import COMPETENCY_RATINGS, ENDORSEMENT_OPTIONS, EVIDENCE_OPTIONS, REGISTRAR_REQUIREMENTS, get_competency_map
+from constants import (
+    COMPETENCY_RATINGS,
+    ENDORSEMENT_OPTIONS,
+    EVIDENCE_OPTIONS,
+    REGISTRAR_REQUIREMENTS,
+    SUPERVISION_FORMATS,
+    SUPERVISOR_CATEGORIES,
+    get_competency_map,
+)
 from models import new_id
 from utils import delete_entry, get_entry_by_id, parse_iso_date, safe_float, upsert_entry
-from cloud_sync import save_cloud_portfolio
 
 
 def _upcoming_registrar_deadlines(portfolio: dict, days: int = 60) -> list[dict]:
@@ -74,10 +81,50 @@ def render_registrar_progress_dashboard(portfolio: dict, *, compact: bool = Fals
         "source of practice hours",
     )
     p2.metric(
-        "Direct client contact in selected annual cycle",
-        f"{metrics['direct_client_contact_hours_selected_cycle']} / 176.0",
-        f"{metrics['direct_client_contact_remaining_selected_cycle']} remaining",
+        "Direct client contact",
+        f"{metrics['direct_client_contact_hours']} / {metrics['direct_client_contact_requirement']}",
+        f"{metrics['direct_client_contact_remaining']} remaining",
     )
+    st.caption(
+        "Direct client contact is cumulative across the registrar program and is derived from the selected pathway: "
+        "176 hours for 1,500 practice hours, 264 for 2,250, and 352 for 3,000."
+    )
+
+    st.markdown("#### Supervision composition")
+    s1, s2 = st.columns(2)
+    s1.metric(
+        "Principal supervisor",
+        f"{metrics['principal_supervision_hours']} / minimum {metrics['principal_supervision_minimum']}",
+        f"{metrics['principal_supervision_remaining']} minimum remaining",
+    )
+    s2.metric(
+        "Secondary supervisor, same AoPE",
+        f"{metrics['secondary_same_area_hours']} / maximum {metrics['secondary_same_area_maximum']}",
+        "within limit" if metrics["secondary_same_area_within_limit"] else "maximum exceeded",
+    )
+
+    s3, s4 = st.columns(2)
+    s3.metric(
+        "Secondary supervisor, different/no AoPE",
+        f"{metrics['secondary_other_area_hours']} / maximum {metrics['secondary_other_area_maximum']}",
+        "within limit" if metrics["secondary_other_area_within_limit"] else "maximum exceeded",
+    )
+    s4.metric(
+        "Group supervision",
+        f"{metrics['group_supervision_hours']} / maximum {metrics['group_supervision_maximum']}",
+        "within limit" if metrics["group_supervision_within_limit"] else "maximum exceeded",
+    )
+
+    if metrics["unclassified_supervision_hours"] > 0:
+        st.warning(
+            f"{metrics['unclassified_supervision_hours']} supervision hours are from legacy entries that still need a "
+            "supervisor category. Edit those entries before relying on the compliance result."
+        )
+    elif metrics["supervision_composition_compliant"]:
+        st.success("Supervision composition currently meets the minimum and maximum allocation rules.")
+    else:
+        st.info("Supervision composition does not yet meet all minimum and maximum allocation rules.")
+
     st.caption("Registrar practice hours are calculated only from the Registrar Practice Log to avoid duplicate counting.")
 
     if metrics["half_practice_report_due"]:
@@ -213,14 +260,12 @@ def _render_registrar_active_cpd(portfolio: dict, endorsement_area: str) -> None
             },
         )
         st.success("Registrar CPD entry saved.")
-        save_cloud_portfolio("portfolio", silent_when_unchanged=True)
         st.rerun()
 
     if delete_clicked:
         if selected_id:
             delete_entry(entries, selected_id)
             st.success("Registrar CPD entry deleted.")
-            save_cloud_portfolio("portfolio", silent_when_unchanged=True)
             st.rerun()
         else:
             st.warning("Select an existing registrar CPD entry first.")
@@ -313,14 +358,12 @@ def _render_practice_diary(portfolio: dict, selected_area: str, competency_map: 
             },
         )
         st.success("Practice log entry saved.")
-        save_cloud_portfolio("portfolio", silent_when_unchanged=True)
         st.rerun()
 
     if delete_clicked:
         if selected_id:
             delete_entry(entries, selected_id)
             st.success("Practice log entry deleted.")
-            save_cloud_portfolio("portfolio", silent_when_unchanged=True)
             st.rerun()
         else:
             st.warning("Select an existing practice log entry first.")
@@ -343,7 +386,8 @@ def _render_supervision_log(portfolio: dict, selected_area: str, competency_map:
                         "Date": e.get("date", ""),
                         "Endorsement area": e.get("endorsement_area", ""),
                         "Supervisor": e.get("supervisor_name", ""),
-                        "Type": e.get("supervision_type", ""),
+                        "Supervisor category": e.get("supervisor_category", e.get("supervision_type", "")),
+                        "Format": e.get("supervision_format", "Group" if e.get("supervision_type") == "Group" else "Individual"),
                         "Supervision hours": e.get("hours", 0.0),
                         "Counts to annual peer consultation": "Yes" if e.get("counts_towards_peer_consultation", True) else "No",
                         "Competency domains": "; ".join(e.get("competency_domains", [])),
@@ -373,10 +417,19 @@ def _render_supervision_log(portfolio: dict, selected_area: str, competency_map:
     selected_id = entry_options[selected_label]
     selected_entry = get_entry_by_id(entries, selected_id)
 
-    default_type = selected_entry.get("supervision_type", "Principal") if selected_entry else "Principal"
-    supervision_types = ["Principal", "Secondary", "Group", "Other"]
-    if default_type not in supervision_types:
-        default_type = "Other"
+    default_category = selected_entry.get("supervisor_category", "") if selected_entry else ""
+    if not default_category and selected_entry:
+        legacy_type = selected_entry.get("supervision_type", "")
+        if legacy_type == "Principal":
+            default_category = "Principal supervisor"
+        elif legacy_type == "Secondary":
+            default_category = "Secondary supervisor - same area of practice endorsement"
+    if default_category not in SUPERVISOR_CATEGORIES:
+        default_category = SUPERVISOR_CATEGORIES[0]
+
+    default_format = selected_entry.get("supervision_format", "") if selected_entry else ""
+    if default_format not in SUPERVISION_FORMATS:
+        default_format = "Group" if selected_entry and selected_entry.get("supervision_type") == "Group" else "Individual"
 
     domain_options = list(competency_map.keys())
     default_domains = selected_entry.get("competency_domains", []) if selected_entry else []
@@ -398,10 +451,21 @@ def _render_supervision_log(portfolio: dict, selected_area: str, competency_map:
             "Supervisor name",
             value=selected_entry.get("supervisor_name", "") if selected_entry else "",
         )
-        supervision_type = st.selectbox(
-            "Supervision type",
-            supervision_types,
-            index=supervision_types.index(default_type),
+        supervisor_category = st.selectbox(
+            "Supervisor category",
+            SUPERVISOR_CATEGORIES,
+            index=SUPERVISOR_CATEGORIES.index(default_category),
+            help=(
+                "Principal supervision must make up at least 50% of the required supervision hours. "
+                "Secondary supervision in the same area is capped at 50%; secondary supervision in a different "
+                "or no endorsed area is capped at 33%."
+            ),
+        )
+        supervision_format = st.selectbox(
+            "Supervision format",
+            SUPERVISION_FORMATS,
+            index=SUPERVISION_FORMATS.index(default_format),
+            help="Group supervision is capped at 33% of the total required supervision hours.",
         )
         competency_domains = st.multiselect(
             "Competency domains discussed",
@@ -435,7 +499,9 @@ def _render_supervision_log(portfolio: dict, selected_area: str, competency_map:
                 "hours": round(float(supervision_hours), 2),
                 "practice_hours": 0.0,
                 "supervisor_name": supervisor_name,
-                "supervision_type": supervision_type,
+                "supervisor_category": supervisor_category,
+                "supervision_format": supervision_format,
+                "supervision_type": supervisor_category,
                 "competency_domains": competency_domains,
                 "notes": notes,
                 "evidence": evidence,
@@ -445,13 +511,11 @@ def _render_supervision_log(portfolio: dict, selected_area: str, competency_map:
             },
         )
         st.success("Supervision entry saved.")
-        save_cloud_portfolio("portfolio", silent_when_unchanged=True)
         st.rerun()
 
     if delete_clicked:
         if selected_id:
             delete_entry(entries, selected_id)
-            save_cloud_portfolio("portfolio", silent_when_unchanged=True)
             st.success("Supervision entry deleted.")
             st.rerun()
         else:
@@ -592,7 +656,6 @@ def render_endorsement_registrar(portfolio: dict) -> None:
                 {"id": new_id(), "type": deadline_type, "due_date": due_date.isoformat(), "status": status, "notes": notes}
             )
             st.success("Deadline added.")
-            save_cloud_portfolio("portfolio", silent_when_unchanged=True)
             st.rerun()
 
     if portfolio["registrar_deadlines"]:

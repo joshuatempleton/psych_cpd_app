@@ -99,9 +99,18 @@ def export_csv_zip(portfolio: dict[str, Any]) -> bytes:
                     {"Metric": "Selected cycle peer hours from registrar supervision", "Value": metrics["registrar_supervision_peer_hours_in_cycle"]},
                     {"Metric": "Registrar practice hours from practice log - program total", "Value": reg["practice_hours"]},
                     {"Metric": "Registrar practice log entries", "Value": reg["practice_log_entry_count"]},
-                    {"Metric": "Direct client contact hours - selected cycle", "Value": reg["direct_client_contact_hours_selected_cycle"]},
-                    {"Metric": "Direct client contact minimum - selected cycle", "Value": 176.0},
+                    {"Metric": "Direct client contact hours - program total", "Value": reg["direct_client_contact_hours"]},
+                    {"Metric": "Direct client contact requirement - program total", "Value": reg["direct_client_contact_requirement"]},
                     {"Metric": "Registrar supervision hours - program total", "Value": reg["supervision_hours"]},
+                    {"Metric": "Principal supervision hours", "Value": reg["principal_supervision_hours"]},
+                    {"Metric": "Principal supervision minimum", "Value": reg["principal_supervision_minimum"]},
+                    {"Metric": "Secondary supervision hours - same AoPE", "Value": reg["secondary_same_area_hours"]},
+                    {"Metric": "Secondary supervision maximum - same AoPE", "Value": reg["secondary_same_area_maximum"]},
+                    {"Metric": "Secondary supervision hours - different/no AoPE", "Value": reg["secondary_other_area_hours"]},
+                    {"Metric": "Secondary supervision maximum - different/no AoPE", "Value": reg["secondary_other_area_maximum"]},
+                    {"Metric": "Group supervision hours", "Value": reg["group_supervision_hours"]},
+                    {"Metric": "Group supervision maximum", "Value": reg["group_supervision_maximum"]},
+                    {"Metric": "Unclassified supervision hours", "Value": reg["unclassified_supervision_hours"]},
                     {"Metric": "Registrar active CPD hours - program total", "Value": reg["active_cpd_hours"]},
                 ]
             ).to_csv(index=False),
@@ -305,14 +314,14 @@ def export_docx(portfolio: dict[str, Any]) -> bytes:
     doc.add_heading("Registrar supervision log", level=1)
     _add_table(
         doc,
-        ["Date", "Hours", "Practice hours", "Supervisor", "Type", "Competency domains", "Counts to annual peer consultation", "Notes", "Evidence"],
+        ["Date", "Hours", "Supervisor", "Supervisor category", "Format", "Competency domains", "Counts to annual peer consultation", "Notes", "Evidence"],
         [
             [
                 e.get("date"),
                 e.get("hours"),
-                e.get("practice_hours"),
                 e.get("supervisor_name"),
-                e.get("supervision_type"),
+                e.get("supervisor_category", e.get("supervision_type")),
+                e.get("supervision_format", "Group" if e.get("supervision_type") == "Group" else "Individual"),
                 "; ".join(e.get("competency_domains", [])),
                 "Yes" if e.get("counts_towards_peer_consultation", True) else "No",
                 e.get("notes"),

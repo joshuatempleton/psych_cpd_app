@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 APP_TITLE = "Psychologist CPD Portfolio Tracker"
-APP_VERSION = "3.2.4"
+APP_VERSION = "3.3.0"
 
 EVIDENCE_OPTIONS = [
     "Certificate of attendance/completion", "Receipt", "Reading list",
@@ -22,10 +22,36 @@ ENDORSEMENT_OPTIONS = [
 ]
 
 REGISTRAR_REQUIREMENTS = {
-    "Approved to seventh year or above, e.g. DPsych/PsyD": {"minimum_weeks": 44, "practice_hours": 1500, "supervision_hours": 40, "active_cpd_hours": 40},
-    "Approved to sixth year with doctoral thesis, e.g. MPsych/PhD": {"minimum_weeks": 66, "practice_hours": 2250, "supervision_hours": 60, "active_cpd_hours": 60},
-    "Approved sixth-year Masters pathway": {"minimum_weeks": 88, "practice_hours": 3000, "supervision_hours": 80, "active_cpd_hours": 80},
+    "Approved to seventh year or above, e.g. DPsych/PsyD": {
+        "minimum_weeks": 44,
+        "practice_hours": 1500,
+        "supervision_hours": 40,
+        "active_cpd_hours": 40,
+        "direct_client_contact_hours": 176,
+    },
+    "Approved to sixth year with doctoral thesis, e.g. MPsych/PhD": {
+        "minimum_weeks": 66,
+        "practice_hours": 2250,
+        "supervision_hours": 60,
+        "active_cpd_hours": 60,
+        "direct_client_contact_hours": 264,
+    },
+    "Approved sixth-year Masters pathway": {
+        "minimum_weeks": 88,
+        "practice_hours": 3000,
+        "supervision_hours": 80,
+        "active_cpd_hours": 80,
+        "direct_client_contact_hours": 352,
+    },
 }
+
+SUPERVISOR_CATEGORIES = [
+    "Principal supervisor",
+    "Secondary supervisor - same area of practice endorsement",
+    "Secondary supervisor - different or no area of practice endorsement",
+]
+
+SUPERVISION_FORMATS = ["Individual", "Group"]
 
 COMPETENCY_RATINGS = ["Not yet addressed", "Developing", "Consolidating", "Achieved", "Supervisor confirmed"]
 
