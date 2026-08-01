@@ -16,6 +16,8 @@ from utils import (
     upsert_entry,
 )
 
+from cloud_sync import save_cloud_portfolio
+
 
 def render_cpd_log(portfolio: dict) -> None:
     """General annual CPD log.
@@ -146,12 +148,15 @@ def render_cpd_log(portfolio: dict) -> None:
             },
         )
         st.success("CPD entry saved.")
+        save_cloud_portfolio("portfolio", silent_when_unchanged=True)
         st.rerun()
+       
 
     if delete_clicked:
         if selected_id:
             delete_entry(entries, selected_id)
             st.success("CPD entry deleted.")
+            save_cloud_portfolio("portfolio", silent_when_unchanged=True)
             st.rerun()
         else:
             st.warning("Select an existing CPD entry first.")

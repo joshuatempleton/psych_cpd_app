@@ -24,5 +24,5 @@ def render_learning_plan(portfolio: dict) -> None:
             goal["outcomes_achieved"] = st.text_area("Outcomes achieved", value=goal.get("outcomes_achieved", ""), key=f"goal_achieved_{goal['id']}")
             if len(goals) > 3 and st.button("Delete this goal", key=f"delete_goal_{goal['id']}"): delete_idx = idx
     if delete_idx is not None:
-        del goals[delete_idx]; st.rerun()
+        del goals[delete_idx]; save_cloud_portfolio("portfolio", silent_when_unchanged=True); st.rerun()
     st.dataframe(pd.DataFrame([{"Goal": g.get("title"), "Status": g.get("status"), "Review date": g.get("review_date"), "Planned activities": g.get("proposed_activities")} for g in goals]), use_container_width=True, hide_index=True)

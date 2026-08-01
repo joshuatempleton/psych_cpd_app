@@ -8,6 +8,7 @@ from calculations import compute_registrar_metrics
 from constants import COMPETENCY_RATINGS, ENDORSEMENT_OPTIONS, EVIDENCE_OPTIONS, REGISTRAR_REQUIREMENTS, get_competency_map
 from models import new_id
 from utils import delete_entry, get_entry_by_id, parse_iso_date, safe_float, upsert_entry
+from cloud_sync import save_cloud_portfolio
 
 
 def _upcoming_registrar_deadlines(portfolio: dict, days: int = 60) -> list[dict]:
@@ -212,12 +213,14 @@ def _render_registrar_active_cpd(portfolio: dict, endorsement_area: str) -> None
             },
         )
         st.success("Registrar CPD entry saved.")
+        save_cloud_portfolio("portfolio", silent_when_unchanged=True)
         st.rerun()
 
     if delete_clicked:
         if selected_id:
             delete_entry(entries, selected_id)
             st.success("Registrar CPD entry deleted.")
+            save_cloud_portfolio("portfolio", silent_when_unchanged=True)
             st.rerun()
         else:
             st.warning("Select an existing registrar CPD entry first.")
@@ -310,12 +313,14 @@ def _render_practice_diary(portfolio: dict, selected_area: str, competency_map: 
             },
         )
         st.success("Practice log entry saved.")
+        save_cloud_portfolio("portfolio", silent_when_unchanged=True)
         st.rerun()
 
     if delete_clicked:
         if selected_id:
             delete_entry(entries, selected_id)
             st.success("Practice log entry deleted.")
+            save_cloud_portfolio("portfolio", silent_when_unchanged=True)
             st.rerun()
         else:
             st.warning("Select an existing practice log entry first.")
@@ -440,11 +445,13 @@ def _render_supervision_log(portfolio: dict, selected_area: str, competency_map:
             },
         )
         st.success("Supervision entry saved.")
+        save_cloud_portfolio("portfolio", silent_when_unchanged=True)
         st.rerun()
 
     if delete_clicked:
         if selected_id:
             delete_entry(entries, selected_id)
+            save_cloud_portfolio("portfolio", silent_when_unchanged=True)
             st.success("Supervision entry deleted.")
             st.rerun()
         else:
@@ -585,6 +592,7 @@ def render_endorsement_registrar(portfolio: dict) -> None:
                 {"id": new_id(), "type": deadline_type, "due_date": due_date.isoformat(), "status": status, "notes": notes}
             )
             st.success("Deadline added.")
+            save_cloud_portfolio("portfolio", silent_when_unchanged=True)
             st.rerun()
 
     if portfolio["registrar_deadlines"]:

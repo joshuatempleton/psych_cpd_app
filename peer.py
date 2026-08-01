@@ -5,6 +5,7 @@ import streamlit as st
 from constants import EVIDENCE_OPTIONS, PEER_FORMATS
 from models import new_id
 from utils import format_goal_links, get_entry_by_id, goal_title_map, parse_iso_date, safe_float, upsert_entry, delete_entry
+from cloud_sync import save_cloud_portfolio
 
 def render_peer_log(portfolio: dict) -> None:
     st.subheader("Peer consultation log")
@@ -46,8 +47,13 @@ def render_peer_log(portfolio: dict) -> None:
             st.error("Own-practice hours cannot exceed total duration.")
         else:
             upsert_entry(entries, {"id": selected_entry.get("id") if selected_entry else new_id(), "date": entry_date.isoformat(), "format": peer_format, "focus": focus, "colleagues": colleagues, "total_hours": round(float(total_hours), 2), "own_practice_hours": round(float(own_practice_hours), 2), "area_of_practice": area, "goal_ids": related_goals, "reflection": reflection, "evidence_type": evidence_type, "evidence_details": evidence_details})
-            st.success("Peer consultation entry saved."); st.rerun()
+            st.success("Peer consultation entry saved.");
+            save_cloud_portfolio("portfolio", silent_when_unchanged=True) 
+            st.rerun()
+            
     if delete_clicked:
         if selected_id:
-            delete_entry(entries, selected_id); st.success("Peer consultation entry deleted."); st.rerun()
+            delete_entry(entries, selected_id); st.success("Peer consultation entry deleted."); 
+            save_cloud_portfolio("portfolio", silent_when_unchanged=True)
+            st.rerun()
         else: st.warning("Select an existing peer consultation entry first.")
