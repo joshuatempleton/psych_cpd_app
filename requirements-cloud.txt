@@ -1,2 +1,0 @@
-# Add these to the existing requirements.txt
-requests>=2.32,<3
