@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import requests
+from urllib.parse import urlparse
 
 
 class CloudStorageError(RuntimeError):
@@ -51,13 +52,47 @@ class SupabasePortfolioStore:
     """
 
     def __init__(self, url: str, anon_key: str, timeout_seconds: int = 20) -> None:
-        self.url = url.rstrip("/")
+        self.url = self._normalise_project_url(url)
         self.anon_key = anon_key.strip()
         self.timeout_seconds = timeout_seconds
-        if not self.url.startswith("https://"):
-            raise ValueError("Supabase URL must use HTTPS.")
         if not self.anon_key:
             raise ValueError("Supabase anonymous key is required.")
+
+    @staticmethod
+    def _normalise_project_url(raw_url: str) -> str:
+        """Return the Supabase project base URL, never an API subpath.
+
+        Accepted input includes the normal project URL and common accidental
+        variants copied from API documentation, such as URLs ending in
+        ``/rest/v1`` or ``/auth/v1``. Dashboard URLs and bare project refs are
+        rejected because they cannot be used for authentication requests.
+        """
+        value = str(raw_url or "").strip().strip('"').strip("'")
+        if not value:
+            raise ValueError("Supabase project URL is required.")
+        if not value.startswith(("https://", "http://")):
+            raise ValueError(
+                "Supabase URL must be the full project URL, for example "
+                "https://your-project-ref.supabase.co"
+            )
+
+        parsed = urlparse(value)
+        hostname = (parsed.hostname or "").lower()
+        if parsed.scheme != "https":
+            raise ValueError("Supabase URL must use HTTPS.")
+        if not hostname.endswith(".supabase.co"):
+            raise ValueError(
+                "Use the Supabase project URL from Project Settings > API, "
+                "for example https://your-project-ref.supabase.co. "
+                "Do not use the dashboard URL."
+            )
+
+        # Authentication and REST paths are appended by this client. Remove
+        # common subpaths if they were accidentally pasted into secrets.
+        base = f"https://{hostname}"
+        if parsed.port:
+            base += f":{parsed.port}"
+        return base
 
     @property
     def configured(self) -> bool:
@@ -90,12 +125,19 @@ class SupabasePortfolioStore:
         )
 
     def sign_in(self, email: str, password: str) -> AuthSession:
-        response = requests.post(
-            f"{self.url}/auth/v1/token?grant_type=password",
-            headers=self._public_headers(),
-            json={"email": email.strip(), "password": password},
-            timeout=self.timeout_seconds,
-        )
+        endpoint = f"{self.url}/auth/v1/token?grant_type=password"
+        try:
+            response = requests.post(
+                endpoint,
+                headers=self._public_headers(),
+                json={"email": email.strip(), "password": password},
+                timeout=self.timeout_seconds,
+            )
+        except requests.RequestException as exc:
+            raise CloudStorageError(
+                "Could not reach Supabase authentication. Check the project URL "
+                "and Streamlit secrets configuration."
+            ) from exc
         data = self._json_or_error(response)
         return self._auth_session_from_response(data, fallback_email=email)
 
