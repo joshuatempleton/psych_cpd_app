@@ -168,7 +168,14 @@ def _initialise_cloud_portfolio(
     try:
         cloud_record = store.load_portfolio(auth["access_token"])
         if cloud_record is None:
-            initial = normalise_portfolio(st.session_state[portfolio_key])
+            # The authentication gate may run before app.py has created the
+            # portfolio session-state key. Build a schema-compatible blank
+            # portfolio rather than indexing a missing key.
+            current = st.session_state.get(portfolio_key, {})
+            if not isinstance(current, dict):
+                current = {}
+            initial = normalise_portfolio(current)
+            st.session_state[portfolio_key] = initial
             created = store.create_portfolio(auth["access_token"], initial)
             st.session_state[portfolio_key] = normalise_portfolio(created.portfolio)
             st.session_state[SESSION_REVISION] = created.revision
