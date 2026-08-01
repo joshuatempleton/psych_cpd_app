@@ -28,6 +28,13 @@ class AuthSession:
 
 
 @dataclass(frozen=True)
+class SignUpResult:
+    session: AuthSession | None
+    confirmation_required: bool
+    email: str
+
+
+@dataclass(frozen=True)
 class CloudPortfolio:
     portfolio: dict[str, Any]
     revision: int
@@ -56,19 +63,31 @@ class SupabasePortfolioStore:
     def configured(self) -> bool:
         return bool(self.url and self.anon_key)
 
-    def sign_up(self, email: str, password: str) -> AuthSession | None:
+    def sign_up(self, email: str, password: str) -> SignUpResult:
+        normalised_email = email.strip().lower()
         response = requests.post(
             f"{self.url}/auth/v1/signup",
             headers=self._public_headers(),
-            json={"email": email.strip(), "password": password},
+            json={"email": normalised_email, "password": password},
             timeout=self.timeout_seconds,
         )
         data = self._json_or_error(response)
-        # When email confirmation is enabled Supabase returns a user but no
-        # access token. The caller should ask the user to confirm their email.
+
+        # Supabase returns no access token when email confirmation is enabled.
+        # A user object may still be returned, including for privacy-preserving
+        # duplicate-signup responses, so the UI must present a neutral message.
         if not data.get("access_token"):
-            return None
-        return self._auth_session_from_response(data, fallback_email=email)
+            return SignUpResult(
+                session=None,
+                confirmation_required=True,
+                email=normalised_email,
+            )
+
+        return SignUpResult(
+            session=self._auth_session_from_response(data, fallback_email=normalised_email),
+            confirmation_required=False,
+            email=normalised_email,
+        )
 
     def sign_in(self, email: str, password: str) -> AuthSession:
         response = requests.post(
