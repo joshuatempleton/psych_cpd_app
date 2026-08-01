@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 import streamlit as st
@@ -15,6 +15,7 @@ SESSION_READY = "cloud_portfolio_loaded"
 SESSION_STATUS = "cloud_save_status"
 SESSION_LAST_SAVED = "cloud_last_saved_at"
 SESSION_AUTOSAVE = "cloud_autosave_enabled"
+SESSION_AUTH_MODE = "cloud_auth_mode"
 
 
 def get_store() -> SupabasePortfolioStore | None:
@@ -39,34 +40,106 @@ def render_cloud_account(
     *,
     require_sign_in: bool = True,
 ) -> None:
-    """Authenticate, load the cloud portfolio and enable automatic saving.
+    """Require authentication, load the user's portfolio and enable cloud saving.
 
-    Call once near the beginning of app.py, after a default portfolio has been
-    created in ``st.session_state[portfolio_key]``. When cloud storage is
-    configured, Supabase is the primary source of truth. JSON remains a backup
-    and legacy import format only.
+    Call this once near the beginning of ``app.py``, after the default portfolio
+    has been placed in ``st.session_state[portfolio_key]`` and before any page or
+    portfolio module is rendered.
     """
     store = get_store()
-    st.sidebar.subheader("Cloud portfolio")
 
     if store is None:
-        st.sidebar.error("Cloud storage is not configured. Add Supabase secrets before using the app.")
+        st.error("Cloud storage is not configured. Add the Supabase URL and anonymous key to Streamlit secrets.")
         if require_sign_in:
             st.stop()
         return
 
+    if cloud_signed_in() and not _ensure_fresh_session(store):
+        _clear_cloud_session(portfolio_key)
+
     if not cloud_signed_in():
-        _render_sign_in(store)
+        _render_authentication_page(store)
         if require_sign_in:
-            st.info("Sign in from the sidebar to open your cloud portfolio.")
             st.stop()
         return
 
     auth = st.session_state[SESSION_AUTH]
-    st.sidebar.caption(f"Signed in as {auth.get('email', '')}")
 
     if not st.session_state.get(SESSION_READY):
         _initialise_cloud_portfolio(store, portfolio_key, normalise_portfolio)
+
+    _render_account_sidebar(store, portfolio_key, normalise_portfolio, auth)
+
+
+def _render_authentication_page(store: SupabasePortfolioStore) -> None:
+    """Render a blocking, full-page password screen."""
+    st.title("Psychology CPD Portfolio")
+    st.caption("Secure cloud access")
+    st.info(
+        "Sign in to open your portfolio. Your portfolio is linked to this account "
+        "and is not loaded until authentication succeeds."
+    )
+
+    left, centre, right = st.columns([1, 1.35, 1])
+    with centre:
+        mode = st.segmented_control(
+            "Account action",
+            options=["Sign in", "Create account"],
+            default=st.session_state.get(SESSION_AUTH_MODE, "Sign in"),
+            key=SESSION_AUTH_MODE,
+            label_visibility="collapsed",
+        )
+
+        with st.form("cloud_auth_form", clear_on_submit=False):
+            email = st.text_input("Email address", autocomplete="email")
+            password = st.text_input(
+                "Password",
+                type="password",
+                autocomplete="current-password" if mode == "Sign in" else "new-password",
+            )
+            submitted = st.form_submit_button(mode or "Sign in", type="primary", width="stretch")
+
+        if mode == "Create account":
+            st.caption("Use at least eight characters. Supabase may require email confirmation before first sign-in.")
+        else:
+            st.caption("Use the same account on each device to access the same portfolio.")
+
+    if not submitted:
+        return
+
+    email = email.strip().lower()
+    if not email or "@" not in email:
+        st.error("Enter a valid email address.")
+        return
+    if len(password) < 8:
+        st.error("Password must contain at least eight characters.")
+        return
+
+    try:
+        if mode == "Create account":
+            session = store.sign_up(email, password)
+            if session is None:
+                st.success("Account created. Confirm your email address, then return here and sign in.")
+                return
+        else:
+            session = store.sign_in(email, password)
+
+        _store_auth_session(session)
+        st.session_state[SESSION_READY] = False
+        st.session_state[SESSION_STATUS] = "loading"
+        st.rerun()
+    except CloudStorageError as exc:
+        st.error(f"Authentication failed: {exc}")
+
+
+def _render_account_sidebar(
+    store: SupabasePortfolioStore,
+    portfolio_key: str,
+    normalise_portfolio: Callable[[dict[str, Any]], dict[str, Any]],
+    auth: dict[str, Any],
+) -> None:
+    st.sidebar.subheader("Cloud portfolio")
+    st.sidebar.caption(f"Signed in as {auth.get('email', '')}")
 
     st.session_state.setdefault(SESSION_AUTOSAVE, True)
     autosave = st.sidebar.toggle(
@@ -85,7 +158,7 @@ def render_cloud_account(
         reload_cloud_portfolio(portfolio_key, normalise_portfolio)
 
     if st.sidebar.button("Sign out", width="stretch"):
-        _clear_cloud_session()
+        _clear_cloud_session(portfolio_key)
         st.rerun()
 
     if autosave:
@@ -115,18 +188,20 @@ def _initialise_cloud_portfolio(
         st.session_state[SESSION_LAST_SAVED] = datetime.now().isoformat(timespec="seconds")
         st.rerun()
     except CloudStorageError as exc:
-        st.sidebar.error(f"Could not load cloud portfolio: {exc}")
+        st.error(f"Could not load your cloud portfolio: {exc}")
         st.stop()
 
 
 @st.fragment(run_every="2s")
 def _cloud_autosave_fragment(portfolio_key: str) -> None:
-    """Save committed session-state changes without modifying each UI module."""
     if not cloud_ready() or not st.session_state.get(SESSION_AUTOSAVE, True):
         return
 
     store = get_store()
     if store is None or portfolio_key not in st.session_state:
+        return
+    if not _ensure_fresh_session(store):
+        st.session_state[SESSION_STATUS] = "error"
         return
 
     current_hash = store.portfolio_hash(st.session_state[portfolio_key])
@@ -146,14 +221,16 @@ def _render_save_status(store: SupabasePortfolioStore, portfolio_key: str) -> No
     if dirty and status != "error":
         status = "saving" if st.session_state.get(SESSION_AUTOSAVE, True) else "unsaved"
 
-    if status == "saving":
+    if status == "loading":
+        st.sidebar.info("Loading cloud portfolio…")
+    elif status == "saving":
         st.sidebar.info("Saving changes to cloud…")
     elif status == "unsaved":
         st.sidebar.warning("Unsaved cloud changes")
     elif status == "conflict":
         st.sidebar.error("Cloud conflict detected. Reload before continuing.")
     elif status == "error":
-        st.sidebar.error("Cloud save failed. Use Save now to retry.")
+        st.sidebar.error("Cloud connection or save failed. Use Save now to retry.")
     else:
         last_saved = st.session_state.get(SESSION_LAST_SAVED)
         label = "Saved to cloud"
@@ -170,6 +247,11 @@ def save_cloud_portfolio(
 ) -> bool:
     store = get_store()
     if store is None or not cloud_ready() or portfolio_key not in st.session_state:
+        return False
+    if not _ensure_fresh_session(store):
+        st.session_state[SESSION_STATUS] = "error"
+        if render_errors:
+            st.sidebar.error("Your session expired. Sign in again.")
         return False
 
     portfolio = st.session_state[portfolio_key]
@@ -212,7 +294,7 @@ def reload_cloud_portfolio(
     normalise_portfolio: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> bool:
     store = get_store()
-    if store is None or not cloud_signed_in():
+    if store is None or not cloud_signed_in() or not _ensure_fresh_session(store):
         return False
 
     auth = st.session_state[SESSION_AUTH]
@@ -235,12 +317,57 @@ def reload_cloud_portfolio(
 
 
 def mark_cloud_dirty() -> None:
-    """Optional helper for modules that want to display save feedback immediately."""
     if cloud_ready():
         st.session_state[SESSION_STATUS] = "unsaved"
 
 
-def _clear_cloud_session() -> None:
+def _store_auth_session(session: Any) -> None:
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=max(int(session.expires_in), 60))
+    st.session_state[SESSION_AUTH] = {
+        "access_token": session.access_token,
+        "refresh_token": session.refresh_token,
+        "user_id": session.user_id,
+        "email": session.email,
+        "expires_at": expires_at.isoformat(),
+    }
+
+
+def _ensure_fresh_session(store: SupabasePortfolioStore) -> bool:
+    auth = st.session_state.get(SESSION_AUTH)
+    if not auth:
+        return False
+
+    expires_at_raw = auth.get("expires_at")
+    if not expires_at_raw:
+        # Sessions created by Version 3.1 did not store expiry. Refresh once.
+        return _refresh_auth_session(store)
+
+    try:
+        expires_at = datetime.fromisoformat(expires_at_raw)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return _refresh_auth_session(store)
+
+    if datetime.now(timezone.utc) < expires_at - timedelta(minutes=2):
+        return True
+    return _refresh_auth_session(store)
+
+
+def _refresh_auth_session(store: SupabasePortfolioStore) -> bool:
+    auth = st.session_state.get(SESSION_AUTH, {})
+    refresh_token = auth.get("refresh_token")
+    if not refresh_token:
+        return False
+    try:
+        session = store.refresh_session(refresh_token)
+        _store_auth_session(session)
+        return True
+    except CloudStorageError:
+        return False
+
+
+def _clear_cloud_session(portfolio_key: str | None = None) -> None:
     for key in (
         SESSION_AUTH,
         SESSION_REVISION,
@@ -252,36 +379,7 @@ def _clear_cloud_session() -> None:
     ):
         st.session_state.pop(key, None)
 
-
-def _render_sign_in(store: SupabasePortfolioStore) -> None:
-    mode = st.sidebar.radio("Account action", ["Sign in", "Create account"], horizontal=True)
-    with st.sidebar.form("cloud_auth_form"):
-        email = st.text_input("Email address")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button(mode, width="stretch")
-
-    if not submitted:
-        return
-    if not email.strip() or len(password) < 8:
-        st.sidebar.error("Enter an email address and a password of at least eight characters.")
-        return
-
-    try:
-        if mode == "Create account":
-            session = store.sign_up(email, password)
-            if session is None:
-                st.sidebar.success("Account created. Confirm the email address, then sign in.")
-                return
-        else:
-            session = store.sign_in(email, password)
-        st.session_state[SESSION_AUTH] = {
-            "access_token": session.access_token,
-            "refresh_token": session.refresh_token,
-            "user_id": session.user_id,
-            "email": session.email,
-        }
-        st.session_state[SESSION_READY] = False
-        st.session_state[SESSION_STATUS] = "loading"
-        st.rerun()
-    except CloudStorageError as exc:
-        st.sidebar.error(str(exc))
+    # Prevent another person using the same browser session from seeing the
+    # previously authenticated user's in-memory portfolio.
+    if portfolio_key:
+        st.session_state.pop(portfolio_key, None)
