@@ -10,6 +10,10 @@ from peer import render_peer_log
 from registrar import render_endorsement_registrar
 from save_load import render_save_load
 from sidebar import render_sidebar
+from cloud_sync import render_cloud_account
+from models import normalise_portfolio
+
+render_cloud_account("portfolio", normalise_portfolio)
 
 def ensure_state() -> None:
     if "portfolio" not in st.session_state:
