@@ -15,7 +15,6 @@ SESSION_READY = "cloud_portfolio_loaded"
 SESSION_STATUS = "cloud_save_status"
 SESSION_LAST_SAVED = "cloud_last_saved_at"
 SESSION_AUTOSAVE = "cloud_autosave_enabled"
-SESSION_AUTH_MODE = "cloud_auth_mode"
 
 
 def get_store() -> SupabasePortfolioStore | None:
@@ -72,111 +71,56 @@ def render_cloud_account(
 
 
 def _render_authentication_page(store: SupabasePortfolioStore) -> None:
-    """Render a blocking, full-page authentication screen."""
+    """Render a blocking sign-in page for administrator-provisioned accounts."""
     st.title("Psychology CPD Portfolio")
     st.caption("Secure cloud access")
     st.info(
-        "Sign in to open your portfolio. Your records are linked to your account "
-        "and are not loaded until authentication succeeds."
+        "Sign in using the account created for you by the portfolio administrator. "
+        "Public account registration is disabled."
     )
 
     left, centre, right = st.columns([1, 1.4, 1])
     with centre:
-        sign_in_tab, create_tab = st.tabs(["Sign in", "Create account"])
-
-        with sign_in_tab:
-            with st.form("cloud_sign_in_form", clear_on_submit=False):
-                sign_in_email = st.text_input(
-                    "Email address",
-                    key="cloud_sign_in_email",
-                    autocomplete="email",
-                )
-                sign_in_password = st.text_input(
-                    "Password",
-                    key="cloud_sign_in_password",
-                    type="password",
-                    autocomplete="current-password",
-                )
-                sign_in_submitted = st.form_submit_button(
-                    "Sign in", type="primary", width="stretch"
-                )
-            st.caption("Use the same account on each device to access the same portfolio.")
-
-        with create_tab:
-            with st.form("cloud_create_account_form", clear_on_submit=False):
-                create_email = st.text_input(
-                    "Email address",
-                    key="cloud_create_email",
-                    autocomplete="email",
-                )
-                create_password = st.text_input(
-                    "Password",
-                    key="cloud_create_password",
-                    type="password",
-                    autocomplete="new-password",
-                    help="Use at least eight characters.",
-                )
-                confirm_password = st.text_input(
-                    "Confirm password",
-                    key="cloud_create_password_confirm",
-                    type="password",
-                    autocomplete="new-password",
-                )
-                create_submitted = st.form_submit_button(
-                    "Create account", type="primary", width="stretch"
-                )
-            st.caption(
-                "Depending on your Supabase settings, you may need to confirm your "
-                "email before signing in."
+        with st.form("cloud_sign_in_form", clear_on_submit=False):
+            sign_in_email = st.text_input(
+                "Email address",
+                key="cloud_sign_in_email",
+                autocomplete="email",
+            )
+            sign_in_password = st.text_input(
+                "Password",
+                key="cloud_sign_in_password",
+                type="password",
+                autocomplete="current-password",
+            )
+            sign_in_submitted = st.form_submit_button(
+                "Sign in", type="primary", width="stretch"
             )
 
-    if sign_in_submitted:
-        email = sign_in_email.strip().lower()
-        if not _valid_email(email):
-            st.error("Enter a valid email address.")
-            return
-        if not sign_in_password:
-            st.error("Enter your password.")
-            return
-        try:
-            session = store.sign_in(email, sign_in_password)
-            _store_auth_session(session)
-            st.session_state[SESSION_READY] = False
-            st.session_state[SESSION_STATUS] = "loading"
-            st.rerun()
-        except CloudStorageError as exc:
-            st.error(f"Sign-in failed: {exc}")
+        st.caption(
+            "Accounts are created by the administrator in Supabase. "
+            "Use the same account on each device to access the same portfolio."
+        )
+
+    if not sign_in_submitted:
         return
 
-    if create_submitted:
-        email = create_email.strip().lower()
-        if not _valid_email(email):
-            st.error("Enter a valid email address.")
-            return
-        if len(create_password) < 8:
-            st.error("Password must contain at least eight characters.")
-            return
-        if create_password != confirm_password:
-            st.error("The passwords do not match.")
-            return
+    email = sign_in_email.strip().lower()
+    if not _valid_email(email):
+        st.error("Enter a valid email address.")
+        return
+    if not sign_in_password:
+        st.error("Enter your password.")
+        return
 
-        try:
-            result = store.sign_up(email, create_password)
-            if result.session is None:
-                st.success(
-                    "Account request accepted. Check your email for a confirmation "
-                    "message, including your junk folder, then return and sign in. "
-                    "If the address is already registered, use the Sign in tab."
-                )
-                return
-
-            _store_auth_session(result.session)
-            st.session_state[SESSION_READY] = False
-            st.session_state[SESSION_STATUS] = "loading"
-            st.rerun()
-        except CloudStorageError as exc:
-            st.error(f"Account creation failed: {exc}")
-
+    try:
+        session = store.sign_in(email, sign_in_password)
+        _store_auth_session(session)
+        st.session_state[SESSION_READY] = False
+        st.session_state[SESSION_STATUS] = "loading"
+        st.rerun()
+    except CloudStorageError as exc:
+        st.error(f"Sign-in failed: {exc}")
 
 def _valid_email(value: str) -> bool:
     local, separator, domain = value.partition("@")
